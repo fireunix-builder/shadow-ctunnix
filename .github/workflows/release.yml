@@ -102,8 +102,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo fmt --check
-          cargo test --locked
+          private_log="${RUNNER_TEMP}/private-test.log"
+          set +e
+          (
+            set -euo pipefail
+            cargo fmt --check
+            cargo test --locked
+          ) >"${private_log}" 2>&1
+          status=$?
+          set -e
+          rm -f "${private_log}"
+          if (( status != 0 )); then
+            echo "::error::Private source tests failed; detailed output was intentionally withheld."
+            exit "${status}"
+          fi
 
       - name: Remove private source
         if: always()
@@ -241,27 +253,39 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: "11.0"
         run: |
           set -euo pipefail
-          cd source
-          if [[ "${USE_ZIG}" == "true" ]]; then
-            RUSTFLAGS="-C strip=symbols" cargo zigbuild \
-              --release --locked --target "${BUILD_TARGET}"
-          else
-            RUSTFLAGS="-C strip=symbols" cargo build \
-              --release --locked --target "${BUILD_TARGET}" --bin CTunnix
-          fi
+          private_log="${RUNNER_TEMP}/private-build.log"
+          set +e
+          (
+            set -euo pipefail
+            cd source
+            if [[ "${USE_ZIG}" == "true" ]]; then
+              RUSTFLAGS="-C strip=symbols" cargo zigbuild \
+                --release --locked --target "${BUILD_TARGET}"
+            else
+              RUSTFLAGS="-C strip=symbols" cargo build \
+                --release --locked --target "${BUILD_TARGET}" --bin CTunnix
+            fi
 
-          archive="ctunnix-${VERSION_NUMBER}-${PLATFORM}-${RELEASE_TARGET}"
-          package_dir="../dist/${archive}"
-          mkdir -p "${package_dir}/conf"
-          install -m 0755 "target/${RUST_TARGET}/release/CTunnix" "${package_dir}/CTunnix"
-          install -m 0644 conf/dev.toml "${package_dir}/conf/example.toml"
-          install -m 0644 ../builder/README.md "${package_dir}/README.md"
-          if [[ "${PLATFORM}" == "linux" ]]; then
-            mkdir -p "${package_dir}/scripts"
-            install -m 0644 deploy/ctunnix.service "${package_dir}/ctunnix.service"
-            install -m 0755 scripts/linux-network-tuning.sh "${package_dir}/scripts/linux-network-tuning.sh"
+            archive="ctunnix-${VERSION_NUMBER}-${PLATFORM}-${RELEASE_TARGET}"
+            package_dir="../dist/${archive}"
+            mkdir -p "${package_dir}/conf"
+            install -m 0755 "target/${RUST_TARGET}/release/CTunnix" "${package_dir}/CTunnix"
+            install -m 0644 conf/dev.toml "${package_dir}/conf/example.toml"
+            install -m 0644 ../builder/README.md "${package_dir}/README.md"
+            if [[ "${PLATFORM}" == "linux" ]]; then
+              mkdir -p "${package_dir}/scripts"
+              install -m 0644 deploy/ctunnix.service "${package_dir}/ctunnix.service"
+              install -m 0755 scripts/linux-network-tuning.sh "${package_dir}/scripts/linux-network-tuning.sh"
+            fi
+            tar -C ../dist -czf "../dist/${archive}.tar.gz" "${archive}"
+          ) >"${private_log}" 2>&1
+          status=$?
+          set -e
+          rm -f "${private_log}"
+          if (( status != 0 )); then
+            echo "::error::Private source build failed; detailed output was intentionally withheld."
+            exit "${status}"
           fi
-          tar -C ../dist -czf "../dist/${archive}.tar.gz" "${archive}"
 
       - name: Build Windows release
         if: matrix.platform == 'windows'
@@ -269,7 +293,15 @@ jobs:
         env:
           RUST_TARGET: ${{ matrix.rust_target }}
         working-directory: source
-        run: cargo build --release --locked --target $env:RUST_TARGET --bin CTunnix
+        run: |
+          $privateLog = Join-Path $env:RUNNER_TEMP "private-build.log"
+          cargo build --release --locked --target $env:RUST_TARGET --bin CTunnix *> $privateLog
+          $status = $LASTEXITCODE
+          Remove-Item $privateLog -ErrorAction SilentlyContinue
+          if ($status -ne 0) {
+            Write-Error "Private source build failed; detailed output was intentionally withheld."
+            exit $status
+          }
 
       - name: Package Windows release
         if: matrix.platform == 'windows'
@@ -388,7 +420,16 @@ jobs:
             cd source
             archive="ctunnix-${VERSION_NUMBER}-${PLATFORM}-${RELEASE_TARGET}"
             package_dir="../dist/${archive}"
-            RUSTFLAGS="-C strip=symbols" cargo build --release --locked --bin CTunnix
+            private_log="/tmp/private-build.log"
+            set +e
+            RUSTFLAGS="-C strip=symbols" cargo build --release --locked --bin CTunnix >"${private_log}" 2>&1
+            status=$?
+            set -e
+            rm -f "${private_log}"
+            if [ "${status}" -ne 0 ]; then
+              echo "Private source build failed; detailed output was intentionally withheld." >&2
+              exit "${status}"
+            fi
             mkdir -p "${package_dir}/conf"
             install -m 0755 target/release/CTunnix "${package_dir}/CTunnix"
             install -m 0644 conf/dev.toml "${package_dir}/conf/example.toml"
@@ -415,7 +456,16 @@ jobs:
             cd source
             archive="ctunnix-${VERSION_NUMBER}-${PLATFORM}-${RELEASE_TARGET}"
             package_dir="../dist/${archive}"
-            RUSTFLAGS="-C strip=symbols" cargo build --release --locked --bin CTunnix
+            private_log="/tmp/private-build.log"
+            set +e
+            RUSTFLAGS="-C strip=symbols" cargo build --release --locked --bin CTunnix >"${private_log}" 2>&1
+            status=$?
+            set -e
+            rm -f "${private_log}"
+            if [ "${status}" -ne 0 ]; then
+              echo "Private source build failed; detailed output was intentionally withheld." >&2
+              exit "${status}"
+            fi
             mkdir -p "${package_dir}/conf"
             install -m 0755 target/release/CTunnix "${package_dir}/CTunnix"
             install -m 0644 conf/dev.toml "${package_dir}/conf/example.toml"
